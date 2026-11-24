@@ -6,6 +6,7 @@
 #
 # Highlight a block and run it (Shift+Enter in VS Code sends it to the Python terminal).
 
+/Users/anocentino/Documents/GitHub/mongodb-safemode-reseed-demo/.venv/bin/python
 
 # ===============================================
 # CONNECT AND LOOK AT THE REPLICA SET
@@ -56,6 +57,7 @@ detach(TARGET)
 # Overwrite each volume from the primary's volume in the replicated snapshot on flasharray02. It's a metadata
 # operation on the array, so 10 TiB takes the same time as 10 GB. The device and its serial don't change.
 for role in ROLES:
+    assert not ssh(TARGET, f"findmnt -n /u01/{role}", allow_fail=True), f"{TARGET} still has /u01/{role} mounted: run detach first"
     source = f"{ARRAYS['flasharray01']}:{snap}.{vol(PRIMARY, role)}"
     check(fa.post_volumes(names=[vol(TARGET, role)], context_names=[ARRAYS[TARGET_ARRAY]], overwrite=True,
                           volume=VolumePost(source=Reference(name=source))), f"overwrite {role}")

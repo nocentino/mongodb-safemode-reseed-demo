@@ -35,7 +35,8 @@ shows the arrays as flasharray01 to 04.
 2. Credentials come from `FA_ENDPOINT`, `FA_USERNAME`, and `FA_PASSWORD`, or from the file in `DEMO_ENV`
    (default `~/Documents/GitHub/mongodb-flasharray-backup-python/.env`). Nothing prints them.
 3. Run `0-prep.py`'s baseline section the day you run the demos, so demos 1 and 2 only move what changed since then.
-   Skip its SafeMode section: the group already exists, and the first block of that section says so.
+   Once the new baseline lands on all three targets, it destroys the older baselines (destroy, not eradicate), so
+   reruns don't pile up. The SafeMode section is safe to run too: the group already exists, so each block skips itself.
 4. Check every member is healthy: `from helpers import *; members()`.
 
 ## SafeMode, and what it really does
