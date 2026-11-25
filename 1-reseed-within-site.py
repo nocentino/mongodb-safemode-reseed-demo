@@ -4,6 +4,28 @@
 # snapshot of the primary, aen-mongo-05 on flasharray01. No fsyncLock, no initial sync, and only the blocks that
 # changed since the last replicated snapshot cross the link. Every other member keeps running the whole time.
 #
+# ARCHITECTURE: rs-multi, one member per FlashArray, each member's data, journal and oplog in aen-mongo-pg-multi on
+# its own array (the log volume stays out). All four arrays are in one data center; flasharray04 stands in for site B.
+#
+#         4 writers
+#                │
+#   ┌─ SITE A ───┼─────────────────────────────────────────────────────────────┐   ┌─ SITE B ───────────────┐
+#   │            ▼                                                             │   │                        │
+#   │ flasharray01             flasharray02             flasharray03           │   │ flasharray04           │
+#   │ ┌──────────┴─────────┐   ┌────────────────────┐   ┌────────────────────┐ │   │ ┌────────────────────┐ │
+#   │ │ aen-mongo-05 (P)   │   │ aen-mongo-06       │   │ aen-mongo-07       │ │   │ │ aen-mongo-04       │ │
+#   │ │ data journal oplog │   │ data journal oplog │   │ data journal oplog │ │   │ │ data journal oplog │ │
+#   │ │ 1. snapshot here   │   │ <- 3. rebuilt      │   │ keeps running      │ │   │ │ keeps running      │ │
+#   │ └──────────┬─────────┘   └──────────▲─────────┘   └────────────────────┘ │   │ └────────────────────┘ │
+#   │            │                        │                                    │   │                        │
+#   │            └─ 2. changed blocks ────┘                                    │   │                        │
+#   └──────────────────────────────────────────────────────────────────────────┘   └────────────────────────┘
+#
+#   1. One snapshot call on flasharray01: the primary's data, journal and oplog at the same instant, no fsyncLock.
+#   2. replicate_now: only the blocks that changed since the last replicated snapshot cross to flasharray02.
+#   3. Stop aen-mongo-06, overwrite its three volumes (a metadata operation on the array), mount, start.
+#      It rejoins as SECONDARY with no initial sync and catches up from the primary's oplog.
+#
 # Highlight a block and run it (Shift+Enter in VS Code sends it to the Python terminal).
 
 /Users/anocentino/Documents/GitHub/mongodb-safemode-reseed-demo/.venv/bin/python
@@ -51,6 +73,7 @@ xfer = wait_for_transfer(fa, snap, TARGET_ARRAY)
 # ===============================================
 # Stop aen-mongo-06 and unmount its data, journal and oplog. The other three members carry on.
 since = utc_now(TARGET)
+
 detach(TARGET)
 
 
@@ -64,16 +87,21 @@ for role in ROLES:
     print(f"overwrote {vol(TARGET, role)} from {alias(source)}")
 
 
-# Mount the volumes and start mongod with its usual options.
+# Mount the volumes
 attach(fa, TARGET)
+
+# Start mongod with its usual options.
 start(TARGET)
 
 
 # ===============================================
 # WATCH IT REJOIN
 # ===============================================
-# No initial sync: crash recovery, then replication recovery from its own oplog, then it catches up from a sync source.
+# No initial sync: crash recovery, then replication recovery from its own oplog,
 wait_for_state(TARGET, "SECONDARY")
+
+
+# Then it catches up from a sync source.
 transitions(TARGET, since)
 
 

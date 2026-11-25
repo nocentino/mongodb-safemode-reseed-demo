@@ -141,12 +141,19 @@ print(s.dataSize + ' ' + s.storageSize + ' ' + s.objects)""", uri=URI).split()
 
 
 def start(node):
-    """Start mongod with the member's usual options. The journal and local database live on their own volumes."""
+    """Start mongod with the member's usual options, printing each step. The journal and local database live on
+    their own volumes."""
     ssh(node, f"sudo runuser -u mongod -- mkdir -p {DBPATH} && "
               f"( [ -L {DBPATH}/journal ] || sudo runuser -u mongod -- ln -s /u01/journal {DBPATH}/journal ) && "
               f"( [ -L {DBPATH}/local ] || sudo runuser -u mongod -- ln -s /u01/oplog {DBPATH}/local )")
-    ssh(node, f"sudo runuser -u mongod -- {BIN}/mongod --replSet rs-multi --bind_ip_all --dbpath {DBPATH} "
-              f"--directoryperdb --logpath {LOG} --logappend --oplogSize 990 --wiredTigerCacheSizeGB 2 --fork")
+    print(f"{node}: {DBPATH}/journal -> /u01/journal, {DBPATH}/local -> /u01/oplog")
+    print(f"{node}: starting mongod --replSet rs-multi --dbpath {DBPATH} --fork")
+    t0 = time.time()
+    out = ssh(node, f"sudo runuser -u mongod -- {BIN}/mongod --replSet rs-multi --bind_ip_all --dbpath {DBPATH} "
+                    f"--directoryperdb --logpath {LOG} --logappend --oplogSize 990 --wiredTigerCacheSizeGB 2 --fork")
+    pid = next((l.split()[-1] for l in out.splitlines() if l.startswith("forked process")), "unknown")
+    print(f"{node}: mongod is up, pid {pid}, {time.time() - t0:.0f} seconds after the start "
+          f"(crash recovery from the copy happens before this)")
 
 
 def stop(node):
@@ -157,10 +164,19 @@ def stop(node):
 
 
 def detach(node):
-    """Stop the member and unmount its data, journal and oplog. The log volume stays mounted."""
+    """Stop the member and unmount its data, journal and oplog, printing each step. The log volume stays mounted."""
+    print(f"{node}: stopping mongod (a clean shutdown)")
+    t0 = time.time()
     stop(node)
-    ssh(node, "sudo umount /u01/data /u01/journal /u01/oplog")
-    print(f"{node}: mongod stopped, data, journal and oplog unmounted")
+    print(f"{node}: mongod stopped after {time.time() - t0:.0f} seconds")
+    for role in ROLES:
+        dev = ssh(node, f"findmnt -n -o SOURCE /u01/{role}", allow_fail=True)
+        if dev:
+            ssh(node, f"sudo umount /u01/{role}")
+            print(f"{node}: unmounted /u01/{role} ({dev})")
+        else:
+            print(f"{node}: /u01/{role} was already unmounted")
+    print(f"{node}: /u01/log stays mounted, so the member's own log survives the overwrite")
 
 
 def attach(fa, node):
@@ -169,7 +185,9 @@ def attach(fa, node):
     array = ARRAYS[MEMBERS[node]]
     for role in ROLES:
         v = list(check(fa.get_volumes(filter=f"name='{vol(node, role)}'", context_names=[array])).items)[0]
-        ssh(node, f"sudo mount /dev/disk/by-id/wwn-0x624a9370{v.serial.lower()} /u01/{role}")
+        wwn = f"/dev/disk/by-id/wwn-0x624a9370{v.serial.lower()}"
+        dev = ssh(node, f"sudo mount {wwn} /u01/{role} && readlink -f {wwn}")
+        print(f"{node}: mounted {v.name} on /u01/{role} ({dev}, by its wwn, serial {v.serial})")
     print(f"{node}: data, journal and oplog mounted")
 
 

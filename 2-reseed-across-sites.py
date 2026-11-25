@@ -4,6 +4,28 @@
 # second site in my lab. Its array gets a replicated copy of the primary's protection group, so we rebuild it from
 # the primary without copying 10 TiB across the WAN: only the blocks that changed since the last copy move.
 #
+# ARCHITECTURE: the same replica set as demo 1. All four arrays are in one data center in my lab; flasharray04
+# stands in for a second site, and the link to it stands in for the WAN.
+#
+#         4 writers
+#                │
+#   ┌─ SITE A ───┼─────────────────────────────────────────────────────────────┐   ┌─ SITE B ───────────────┐
+#   │            ▼                                                             │   │                        │
+#   │ flasharray01             flasharray02             flasharray03           │   │ flasharray04           │
+#   │ ┌──────────┴─────────┐   ┌────────────────────┐   ┌────────────────────┐ │   │ ┌────────────────────┐ │
+#   │ │ aen-mongo-05 (P)   │   │ aen-mongo-06       │   │ aen-mongo-07       │ │   │ │ aen-mongo-04       │ │
+#   │ │ data journal oplog │   │ data journal oplog │   │ data journal oplog │ │   │ │ data journal oplog │ │
+#   │ │ 1. snapshot here   │   │ keeps running      │   │ keeps running      │ │   │ │ <- 3. rebuilt      │ │
+#   │ └──────────┬─────────┘   └────────────────────┘   └────────────────────┘ │   │ └──────────▲─────────┘ │
+#   │            │                                                             │WAN│            │           │
+#   │            └── 2. replicate_now: changed blocks only ────────────────────┼───┼────────────┘           │
+#   └──────────────────────────────────────────────────────────────────────────┘   └────────────────────────┘
+#
+#   1. One snapshot call on flasharray01: the primary's data, journal and oplog at the same instant, no fsyncLock.
+#   2. replicate_now: only the blocks that changed since the last copy cross to site B, not 10 TiB.
+#   3. Stop aen-mongo-04, overwrite its three volumes from aen-mongo-05's copies on flasharray04, mount, start.
+#      It rejoins as SECONDARY with no initial sync. Site A never stops serving.
+#
 # Highlight a block and run it (Shift+Enter in VS Code sends it to the Python terminal).
 
 
