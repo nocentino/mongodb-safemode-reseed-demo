@@ -4,19 +4,44 @@ Four live demos, built on the lab and the helpers behind the
 [MongoDB on Everpure](https://www.nocentino.com/posts/2026-11-17-mongodb-on-everpure-why-it-matters/) blog series. Each numbered
 file is meant to be highlighted and run one block at a time (Shift+Enter in VS Code sends the selection to the Python terminal).
 
-| File | What it shows | Time in my lab (2026-11-24) |
+| File | What it shows | Time in my lab (2026-11-25 runs) |
 |---|---|---|
-| `0-prep.py` | Run first. A baseline replicated snapshot to every target, and the SafeMode protection group | baseline: about 4 minutes; SafeMode group: already built |
-| `1-reseed-within-site.py` | Rebuild `aen-mongo-06` on flasharray02 from a replicated snapshot of the primary, under load, no fsyncLock | 2.5 minutes. 4.9 MiB crossed the link, SECONDARY 5 s after start |
-| `2-reseed-across-sites.py` | The same for `aen-mongo-04` on flasharray04, standing in for a second site | 2 minutes. 46.7 MiB crossed the link, SECONDARY 5 s after start |
-| `3-safemode.py` | Delete a SafeMode snapshot (soft delete only), try to eradicate it (blocked), recover it, try to loosen the rules (blocked), restore instantly | 10 seconds. 16 TiB restore volume ready in 0.25 s |
+| `0-prep.py` | Run first. A baseline replicated snapshot to every target, and the SafeMode protection group | baseline (2026-11-24): about 4 minutes; SafeMode group: already built |
+| `1-reseed-within-site.py` | Rebuild `aen-mongo-06` on flasharray02 from a replicated snapshot of the primary, under load, no fsyncLock | 2 minutes (125 s). 125.3 MiB crossed the link, SECONDARY 1 s after mongod started; 4 members match, no gaps |
+| `2-reseed-across-sites.py` | The same for `aen-mongo-04` on flasharray04, standing in for a second site | 2 minutes (117 s). 32.5 MiB crossed the link, SECONDARY 1 s after mongod started; 4 members match, no gaps |
+| `3-safemode.py` | Delete a SafeMode snapshot (soft delete only), try to eradicate it (blocked), recover it | 5 seconds |
 | `4-sharded-prep.py` | Run before demo 4. Makes flasharray03 a replication target of flasharray01's sharded group, and a baseline replicated snapshot | first baseline (2026-11-25): 12 minutes, 2,134.7 GiB crossed the link |
-| `5-reseed-shard-member.py` | Demo 4. Rebuild `aen-mongo-sh1-03` from a replicated snapshot of `sh1`'s primary, under writes through `mongos`, overwriting only its 3 of the snapshot's 9 volumes | 2.5 minutes. 9 to 226 MiB crossed the link, SECONDARY 2 s after start; 4 of 4 runs passed |
+| `5-reseed-shard-member.py` | Demo 4. Rebuild `aen-mongo-sh1-03` from a replicated snapshot of `sh1`'s primary, under writes through `mongos`, overwriting only its 3 of the snapshot's 9 volumes | 2.5 minutes (159 s). 268.3 MiB crossed the link, SECONDARY 3 s after mongod started; `sh1`'s 3 members match, no gaps; 5 of 5 runs passed |
 | `9-reset.py` | When you are done. Destroys the demo reseed snapshots and their copies; keeps the baseline and never touches SafeMode | under a minute |
 
 `helpers.py` is plumbing: SSH, `mongosh`, mount and unmount, waits, and printing. `sharded.py` is the same for the sharded
 cluster, with the same function names, so demo 4 reads block for block like demos 1 and 2. The array calls that matter stay
 in the numbered files, in the open.
+
+### What the output looks like
+
+Every helper prints one line per step, starting with the host, replica set, or array it's about, so you can follow the demo
+by reading down the left edge. The middle of demo 1, for example:
+
+```
+aen-mongo-06: stopping mongod (a clean shutdown)
+aen-mongo-06: mongod stopped after 17 seconds
+aen-mongo-06: unmounted /u01/data (/dev/sdd)
+aen-mongo-06: unmounted /u01/journal (/dev/sdc)
+aen-mongo-06: unmounted /u01/oplog (/dev/sdg)
+aen-mongo-06: /u01/log stays mounted, so the member's own log survives the overwrite
+aen-mongo-06: overwrote aen-mongo-multi-06-data from flasharray01:aen-mongo-pg-multi.seed06-20261125-133602.aen-mongo-multi-05-data
+...
+aen-mongo-06: mounted aen-mongo-multi-06-data on /u01/data (/dev/sdd, by its wwn, serial 81F096D1C1642A690330AFB7)
+...
+aen-mongo-06: starting mongod --replSet rs-multi --dbpath /u01/data/rs-multi --fork
+aen-mongo-06: mongod is up, pid 206106, 2 seconds after the start (crash recovery from the copy happens before this)
+aen-mongo-06: SECONDARY, 1 second after mongod started
+aen-mongo-06: 2026-11-25 19:36:47 UTC   No initial sync required. Attempting to begin steady replication
+```
+
+The overwrite loop in demos 1, 2 and 4 checks that each volume is unmounted before it overwrites it, so a skipped `detach`
+stops the demo instead of overwriting a running member's volumes.
 
 ## The lab
 
@@ -67,7 +92,8 @@ A member can only be seeded from its own shard, so flasharray01's group replicat
 
 `aen-mongo-pg-safemode` on flasharray01 holds clones of the primary's data, journal, and oplog, made from the baseline snapshot
 (no data copied). It keeps every snapshot for 24 hours, and its retention lock is **ratcheted**. That's permanent: only
-Everpure Technical Services can set it back to unlocked. Tested on 2026-11-24:
+Everpure Technical Services can set it back to unlocked. Tested on 2026-11-24 (demo 3 now stops after the recover step;
+the last three rows come from that day's tests):
 
 | Action | Result |
 |---|---|

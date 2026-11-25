@@ -46,7 +46,7 @@ data_size()
 
 # Each member has its own data, journal and oplog volumes, in its own protection group on its own array.
 for role in ROLES:
-    print(f"{TARGET} /u01/{role:8} {vol(TARGET, role):28} on {TARGET_ARRAY}, in {PG}")
+    print(f"{TARGET}: /u01/{role:8} is {vol(TARGET, role):28} on {TARGET_ARRAY}, in {PG}")
 
 
 # ===============================================
@@ -64,7 +64,7 @@ start_load()
 snap = fa.post_protection_group_snapshots(source_names=[PG], context_names=[ARRAYS["flasharray01"]], replicate_now=True,
                                           protection_group_snapshot=ProtectionGroupSnapshotPost(suffix=suffix("seed06")))
 snap = list(check(snap, "snapshot").items)[0].name
-print(snap)
+print(f"flasharray01: took {snap}, replicating it now")
 
 
 # Only changed blocks cross the link. 10 TiB of data, and the transfer is what changed since the last copy.
@@ -87,7 +87,7 @@ for role in ROLES:
     source = f"{ARRAYS['flasharray01']}:{snap}.{vol(PRIMARY, role)}"
     check(fa.post_volumes(names=[vol(TARGET, role)], context_names=[ARRAYS[TARGET_ARRAY]], overwrite=True,
                           volume=VolumePost(source=Reference(name=source))), f"overwrite {role}")
-    print(f"overwrote {vol(TARGET, role)} from {alias(source)}")
+    print(f"{TARGET}: overwrote {vol(TARGET, role)} from {alias(source)}")
 
 
 # Mount the volumes
@@ -113,7 +113,18 @@ transitions(TARGET, since)
 # ===============================================
 # Stop the load, wait for every member to apply the same last operation, then compare them.
 stop_load()
+
+
+# Wait until the target has caught up with the primary before checking the replica set state.
 wait_until_caught_up()
+
+
+# Display the current members of the replica set.
 members()
+
+
+# Compare the members to ensure they are consistent.
 compare_members()
+
+# Check for any replication gaps on the target member.
 gaps(TARGET)

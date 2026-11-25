@@ -43,12 +43,16 @@ def primary(rs):
 
 
 def members(sets=("sh1", "sh2", "cfg")):
-    """Every member's state, as its set's primary sees it."""
+    """Every member's state, as its set's primary sees it, one line per member."""
     for rs in sets:
         p = primary(rs)
-        line = mongosh(p, "print(rs.status().members.map(m => m.name.split('.')[0] + ' ' + m.stateStr).join(', '))",
-                       uri=direct(p)) if p else "no primary"
-        print(f"{rs:4} {line}")
+        if not p:
+            print(f"{rs}: no primary")
+            continue
+        out = mongosh(p, "rs.status().members.forEach(m => print(m.name.split('.')[0] + ' ' + m.stateStr))", uri=direct(p))
+        for line in out.splitlines():
+            node, st = line.split(" ", 1)
+            print(f"{node}: {st} in {rs} on {LAYOUT.get(node, ('an unknown array',))[0]}")
 
 
 def state(node):
@@ -60,13 +64,17 @@ def state(node):
 
 
 def wait_for_state(node, want="SECONDARY", timeout=600):
-    t0 = time.time()
+    """Poll the member's state as its set's primary sees it, print every change, and stop when it reaches want."""
+    t0, last = time.time(), None
     while time.time() - t0 < timeout:
-        if state(node) == want:
-            print(f"{node} is {want} {time.time() - t0:.0f} seconds after it started")
+        s = state(node)
+        if s != last:
+            print(f"{node}: {s}, {secs(time.time() - t0)} after mongod started")
+            last = s
+        if s == want:
             return True
         time.sleep(2)
-    print(f"{node} didn't reach {want} in {timeout} seconds; it's {state(node)}")
+    print(f"{node}: didn't reach {want} in {timeout} seconds; it's {last}")
     return False
 
 
@@ -76,8 +84,9 @@ def data_size():
   { $shardedDataDistribution: {} }, { $match: { ns: 'demo.orders' } }]).toArray()[0];
 print((b.dataSize / 2**40).toFixed(2) + ' ' + b.objects + ' ' + d.shards.map(s => s.shardName + '=' + s.numOwnedDocuments).join(','))""",
                   uri=MONGOS).split()
-    print(f"bulk database: {out[0]} TiB of data, {int(out[1]):,} documents, both shards; "
-          f"demo.orders owned per shard: {out[2].replace(',', ', ')}")
+    print(f"{ROUTER}: the bulk database holds {out[0]} TiB of data, {int(out[1]):,} documents, across both shards")
+    owned = ", ".join(f"{rs} {int(n):,}" for rs, n in sorted(x.split("=") for x in out[2].split(",")))
+    print(f"{ROUTER}: demo.orders documents owned per shard, {owned}")
 
 
 # ---------- one member ----------
@@ -96,7 +105,7 @@ def start(node):
     out = ssh(node, f"sudo runuser -u mongod -- {BIN}/mongod --replSet {rs} {role} --port 27017 --bind_ip_all --dbpath {d} "
                     f"--directoryperdb --logpath {LOG} --logappend --oplogSize 990 --wiredTigerCacheSizeGB 2 --fork")
     pid = next((l.split()[-1] for l in out.splitlines() if l.startswith("forked process")), "unknown")
-    print(f"{node}: mongod is up, pid {pid}, {time.time() - t0:.0f} seconds after the start "
+    print(f"{node}: mongod is up, pid {pid}, {secs(time.time() - t0)} after the start "
           f"(crash recovery from the copy happens before this)")
 
 
@@ -112,7 +121,7 @@ def detach(node):
     print(f"{node}: stopping mongod (a clean shutdown; a healthy secondary spends about 15 s in quiesce)")
     t0 = time.time()
     stop(node)
-    print(f"{node}: mongod stopped after {time.time() - t0:.0f} seconds")
+    print(f"{node}: mongod stopped after {secs(time.time() - t0)}")
     for role in ROLES:
         dev = ssh(node, f"findmnt -n -o SOURCE /u01/{role}", allow_fail=True)
         if dev:
@@ -148,14 +157,17 @@ while (true) {{ c.insertOne({{ _id: '{run}-w{w}-' + s, run: '{run}', w: {w}, seq
         b64 = base64.b64encode(js.encode()).decode()
         ssh(ROUTER, f"nohup bash -c 'mongosh --quiet \"{MONGOS}\" --eval \"$(echo {b64} | base64 -d)\"' "
                     f"</dev/null >/tmp/shard-writer{w}.log 2>&1 &")
+    print(f"{ROUTER}: started {WRITERS} writers through mongos into demo.orders, run {run}, each numbering its own "
+          f"documents from 0")
     time.sleep(5)
-    print(f"load running through mongos on {ROUTER}: {ops_per_second()} inserts a second, run {run}")
+    print(f"{ROUTER}: {ops_per_second():,} inserts a second through mongos")
 
 
 def stop_load():
     ssh(ROUTER, "touch /tmp/stop-shard-load")
-    time.sleep(5)   # each writer checks the stop file every 100 inserts
-    print("load stopped")
+    print(f"{ROUTER}: told the writers to stop (each checks every 100 inserts)")
+    time.sleep(5)
+    print(f"{ROUTER}: writers stopped, {ops_per_second():,} inserts a second through mongos now")
 
 
 def ops_per_second():
@@ -172,10 +184,10 @@ def wait_until_caught_up(rs="sh1", timeout=300):
     while time.time() - t0 < timeout:
         p = primary(rs)
         if p and mongosh(p, js, uri=direct(p), allow_fail=True) == "same":
-            print(f"every member of {rs} is on the same last operation")
+            print(f"{rs}: every member is on the same last operation, {secs(time.time() - t0)} after the load stopped")
             return True
         time.sleep(2)
-    print(f"members of {rs} are NOT on the same last operation")
+    print(f"{rs}: members are NOT on the same last operation after {timeout} seconds")
     return False
 
 
@@ -187,19 +199,23 @@ def compare_members(rs="sh1"):
     with ThreadPoolExecutor(len(SETS[rs])) as pool:
         results = list(pool.map(lambda n: mongosh(n, js, uri=direct(n)).split(), SETS[rs]))
     for n, (c, h) in zip(SETS[rs], results):
-        print(f"{rs}  {n}  demo.orders documents: {int(c):>9,}   demo dbHash: {h[:12]}")
+        print(f"{n}: {int(c):,} demo.orders documents, demo dbHash {h[:12]}")
 
 
 def gaps(run):
     """Every writer numbers its documents from 0, so n documents has to top out at n - 1. Counted through mongos."""
-    print(mongosh(ROUTER, f"""db.getSiblingDB('demo').orders.aggregate([
+    out = mongosh(ROUTER, f"""db.getSiblingDB('demo').orders.aggregate([
   {{ $match: {{ _id: {{ $gte: '{run}-', $lt: '{run}.' }} }} }},
   {{ $group: {{ _id: '$w', n: {{ $sum: 1 }}, max: {{ $max: '$seq' }} }} }}, {{ $sort: {{ _id: 1 }} }}])
-  .forEach(r => print('writer ' + r._id + ': ' + r.n + ' documents, highest seq ' + r.max + (r.n === r.max + 1 ? ', no gaps' : ', GAPS')))""",
-                  uri=MONGOS))
+  .forEach(r => print(r._id + ' ' + r.n + ' ' + r.max))""", uri=MONGOS)
+    for line in out.splitlines():
+        w, n, top = (int(x) for x in line.split())
+        print(f"{ROUTER}: writer {w}, {n:,} documents through mongos, highest seq {top:,}, "
+              f"{'no gaps' if n == top + 1 else 'GAPS'}")
 
 
 def metadata():
     """MongoDB's own check of the cluster's routing metadata, through mongos."""
     n = mongosh(ROUTER, "print(db.getSiblingDB('admin').checkMetadataConsistency().toArray().length)", uri=MONGOS)
-    print("checkMetadataConsistency through mongos:", "no inconsistencies" if n == "0" else f"{n} INCONSISTENCIES")
+    print(f"{ROUTER}: checkMetadataConsistency through mongos, "
+          + ("no inconsistencies" if n == "0" else f"{n} INCONSISTENCIES"))

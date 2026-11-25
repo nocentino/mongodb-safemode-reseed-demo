@@ -47,7 +47,7 @@ members()
 
 # The primary's protection group on flasharray01 replicates to the arrays under every other member, both sites.
 targets = fa.get_protection_groups_targets(group_names=[PG], context_names=[ARRAYS["flasharray01"]])
-show([t.member.name for t in check(targets, "targets").items])
+print(f"flasharray01: {PG} replicates to " + ", ".join(alias(t.member.name) for t in check(targets, "targets").items))
 
 
 # ===============================================
@@ -62,7 +62,7 @@ start_load()
 snap = fa.post_protection_group_snapshots(source_names=[PG], context_names=[ARRAYS["flasharray01"]], replicate_now=True,
                                           protection_group_snapshot=ProtectionGroupSnapshotPost(suffix=suffix("seed04")))
 snap = list(check(snap, "snapshot").items)[0].name
-print(snap)
+print(f"flasharray01: took {snap}, replicating it now")
 
 
 # The copy at site B. Look at what crossed the link: changed blocks, not 10 TiB.
@@ -85,7 +85,7 @@ for role in ROLES:
     source = f"{ARRAYS['flasharray01']}:{snap}.{vol(PRIMARY, role)}"
     check(fa.post_volumes(names=[vol(TARGET, role)], context_names=[ARRAYS[TARGET_ARRAY]], overwrite=True,
                           volume=VolumePost(source=Reference(name=source))), f"overwrite {role}")
-    print(f"overwrote {vol(TARGET, role)} from {alias(source)}")
+    print(f"{TARGET}: overwrote {vol(TARGET, role)} from {alias(source)}")
 
 
 # Reattach the target to the replica set
