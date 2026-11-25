@@ -1,6 +1,6 @@
 # MongoDB reseed and SafeMode demo
 
-Three live demos, built on the lab and the helpers behind the
+Four live demos, built on the lab and the helpers behind the
 [MongoDB on Everpure](https://www.nocentino.com/posts/2026-11-17-mongodb-on-everpure-why-it-matters/) blog series. Each numbered
 file is meant to be highlighted and run one block at a time (Shift+Enter in VS Code sends the selection to the Python terminal).
 
@@ -10,10 +10,13 @@ file is meant to be highlighted and run one block at a time (Shift+Enter in VS C
 | `1-reseed-within-site.py` | Rebuild `aen-mongo-06` on flasharray02 from a replicated snapshot of the primary, under load, no fsyncLock | 2.5 minutes. 4.9 MiB crossed the link, SECONDARY 5 s after start |
 | `2-reseed-across-sites.py` | The same for `aen-mongo-04` on flasharray04, standing in for a second site | 2 minutes. 46.7 MiB crossed the link, SECONDARY 5 s after start |
 | `3-safemode.py` | Delete a SafeMode snapshot (soft delete only), try to eradicate it (blocked), recover it, try to loosen the rules (blocked), restore instantly | 10 seconds. 16 TiB restore volume ready in 0.25 s |
+| `4-sharded-prep.py` | Run before demo 4. Makes flasharray03 a replication target of flasharray01's sharded group, and a baseline replicated snapshot | first baseline (2026-11-25): 12 minutes, 2,134.7 GiB crossed the link |
+| `5-reseed-shard-member.py` | Demo 4. Rebuild `aen-mongo-sh1-03` from a replicated snapshot of `sh1`'s primary, under writes through `mongos`, overwriting only its 3 of the snapshot's 9 volumes | 2.5 minutes. 9 to 226 MiB crossed the link, SECONDARY 2 s after start; 4 of 4 runs passed |
 | `9-reset.py` | When you are done. Destroys the demo reseed snapshots and their copies; keeps the baseline and never touches SafeMode | under a minute |
 
-`helpers.py` is plumbing: SSH, `mongosh`, mount and unmount, waits, and printing. The array calls that matter stay in the
-numbered files, in the open.
+`helpers.py` is plumbing: SSH, `mongosh`, mount and unmount, waits, and printing. `sharded.py` is the same for the sharded
+cluster, with the same function names, so demo 4 reads block for block like demos 1 and 2. The array calls that matter stay
+in the numbered files, in the open.
 
 ## The lab
 
@@ -29,6 +32,25 @@ numbered files, in the open.
 Each member's data, journal, and oplog volumes are in `aen-mongo-pg-multi` on its own array; the log volume is not. Output
 shows the arrays as flasharray01 to 04.
 
+### The sharded cluster (demo 4)
+
+The cluster from the sharded posts in the series: shards `sh1` and `sh2` and the config server set `cfg`, one member of each
+per array on flasharray01 to 03, and `mongos` on `aen-mongo-router-01`. It holds 10 TiB in `bulk` (5 TiB per shard). On each
+array, `aen-mongo-pg-sharded` holds that array's three `mongod`s, so one snapshot carries a member of `sh1`, a member of `sh2`
+and a config server.
+
+```
+       flasharray01                 flasharray02                 flasharray03
+   aen-mongo-sh1-01 (P) ──┐     aen-mongo-sh1-02             aen-mongo-sh1-03  <- rebuilt
+   aen-mongo-sh2-01       │     aen-mongo-sh2-02 (P)         aen-mongo-sh2-03
+   aen-mongo-cfg-01       │     aen-mongo-cfg-02             aen-mongo-cfg-03 (P)
+                          └──── replicated to flasharray03 ───────┘
+```
+
+A member can only be seeded from its own shard, so flasharray01's group replicates to flasharray03. The demo overwrites only
+`aen-mongo-sh1-03`'s data, journal, and oplog, from `aen-mongo-sh1-01`'s copies in the snapshot; the copies of
+`aen-mongo-sh2-01` and `aen-mongo-cfg-01` aren't touched. The balancer is on, and the demo doesn't change it.
+
 ## Before you run the demos
 
 1. `pip install -r requirements.txt` into `.venv` (done), and open the folder in VS Code so `.vscode/settings.json` picks up the venv.
@@ -38,6 +60,8 @@ shows the arrays as flasharray01 to 04.
    Once the new baseline lands on all three targets, it destroys the older baselines (destroy, not eradicate), so
    reruns don't pile up. The SafeMode section is safe to run too: the group already exists, so each block skips itself.
 4. Check every member is healthy: `from helpers import *; members()`.
+5. For demo 4, run `4-sharded-prep.py` the same day, so the demo only moves what changed since then, and check the sharded
+   cluster: `from sharded import *; members()`.
 
 ## SafeMode, and what it really does
 

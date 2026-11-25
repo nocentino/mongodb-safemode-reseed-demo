@@ -91,7 +91,7 @@ def ssh(node, command, allow_fail=False):
     """Run a bash command on a node, with mongod and mongosh on the PATH."""
     remote = f"export PATH={BIN}:{MONGOSH}:$PATH; {command}"
     for _ in range(3):   # the lab network sometimes drops a connection when many open at once
-        r = subprocess.run(["ssh", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=no",
+        r = subprocess.run(["ssh", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=no", "-o", "ConnectTimeout=10",
                             f"packer@{node}.{DOMAIN}", remote], capture_output=True, text=True)
         if r.returncode != 255:
             break
@@ -179,18 +179,29 @@ def utc_now(node):
 
 def transitions(node, since):
     """The member's state changes since a point in time, from its log. The log volume isn't in the protection
-    group, so a restore doesn't rewind it."""
-    print(ssh(node, f"""sudo python3 -c "
-import json
-for l in open('{LOG}'):
-    try: d = json.loads(l)
+    group, so a restore doesn't rewind it. These logs run to many GB, so it reads only the last 300 MB (about half an
+    hour in my lab) unless `since` is older than that, and parses only the lines that can match."""
+    py = f"""import json, os
+since, path, window = {since!r}, {LOG!r}, 300_000_000
+keys = (b'Replica set state transition', b'No initial sync required', b'Too stale', b'Starting rollback', b'Changed sync source')
+f = open(path, 'rb')
+if os.path.getsize(path) > window:
+    f.seek(os.path.getsize(path) - window); f.readline(); start = f.tell()
+    try: older = json.loads(f.readline())['t']['$date'][:19] > since
+    except Exception: older = True
+    f.seek(0 if older else start)
+for raw in f:
+    if not any(k in raw for k in keys): continue
+    try: d = json.loads(raw)
     except Exception: continue
-    m = d.get('msg', ''); t = d['t']['\\$date'][:19]
-    if t < '{since}': continue
+    m = d.get('msg', ''); t = d['t']['$date'][:19]
+    if t < since: continue
     if m == 'Replica set state transition': print(t, ' ', d['attr']['oldState'], '->', d['attr']['newState'])
     elif m.startswith('No initial sync required') or m.startswith('Too stale') or m.startswith('Starting rollback'): print(t, ' ', m[:60])
     elif m == 'Changed sync source': print(t, '  syncing from', d['attr']['newSyncSource'].split('.')[0])
-" """, allow_fail=True))
+"""
+    b64 = base64.b64encode(py.encode()).decode()
+    print(ssh(node, f'sudo python3 -c "$(echo {b64} | base64 -d)"', allow_fail=True))
 
 
 # ---------- load and proof ----------

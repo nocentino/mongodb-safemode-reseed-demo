@@ -38,6 +38,14 @@ VS Code, in the style of Anthony's numbered demo scripts.
   they're taken; two destroyed test snapshots (`test0-…`, `test1-…`) eradicate on their own about 2026-12-02.
 - flasharray04 also has a 10-minute snapshot schedule on `aen-mongo-04`'s volumes (`aen-mongo-multi-04-snap-10min`). It
   isn't part of this demo; leave it alone.
+- **Sharded cluster (demo 4):** `sh1`, `sh2` and `cfg`, one member of each per array on flasharray01 to 03, `mongos` on
+  `aen-mongo-router-01`, 10 TiB in `bulk`, MongoDB 9.0.8, balancer on. Primaries on 2026-11-25: `sh1-01`, `sh2-02`,
+  `cfg-03`. Built and documented in `~/Documents/GitHub/mongodb-everpure-series` (`python/post7_sharded_snapshot.py`,
+  `post9_reseed_shard_member.py`); the demo follows part 9 of the series.
+- **Sharded replication (added 2026-11-25, Anthony approved):** `aen-mongo-pg-sharded` on flasharray01 now replicates to
+  flasharray03 (no schedule; `replicate_now` only). Baseline `aen-mongo-pg-sharded.baseline-20261125-084002` and its copy on
+  flasharray03; the first transfer took 12 minutes and moved 2,134.7 GiB. Keep the newest one, as with `aen-mongo-pg-multi`.
+  The `seedsh1-*` snapshots from the four test runs are live; `9-reset.py` destroys them.
 
 ## What the tests showed (2026-11-24)
 
@@ -46,6 +54,7 @@ VS Code, in the style of Anthony's numbered demo scripts.
 | 1 within a site | 4.9 MiB crossed to flasharray02; `aen-mongo-06` SECONDARY 5 s after start; 4 members match (count, dbHash, no gaps); 2.5 min |
 | 2 across sites | 46.7 MiB crossed to flasharray04; `aen-mongo-04` SECONDARY 5 s after start; all match; 2 min |
 | 3 SafeMode | delete = soft destroy with 192 h to auto-eradication; eradicate blocked ("Eradication is disabled."); recover works; shorten retention / unlock / remove volume = HTTP 403; destroy group = "Invalid operation on protected objects."; 16 TiB restore volume in 0.25 s |
+| 4 shard member (2026-11-25) | 4 of 4 runs passed: 9.3 to 226 MiB crossed to flasharray03 in 11 s; `aen-mongo-sh1-03` SECONDARY 2 s after start (about 27 s from the stop request, 15 s of it MongoDB's quiesce); no initial sync; `sh1`'s three members match (count, dbHash); writers gap-free; `checkMetadataConsistency` clean; 158 s end to end |
 
 **SafeMode nuance to keep straight:** deleting a snapshot is *allowed* (it becomes destroyed and recoverable); *erasing* it
 early is what's blocked. Anthony first asked for "trying to delete the snap and have that deletion be blocked"; the demo
@@ -63,6 +72,11 @@ was adjusted to the real behavior ("can't erase early", "a delete starts an 8-da
   `1-reseed-within-site.py` is the venv's Python path, there on purpose to start the REPL in the integrated terminal.
   Don't set `PYTHON_BASIC_REPL=1`: the classic REPL prints the extension's bracketed paste codes as text and runs each
   statement of a block separately.
+- **The mongod logs are huge** (9.9 GB on `sh1-03`, 20 GB on `sh1-01`, 2.3 GB on the rs-multi members). Parsing a whole
+  log in Python took about 130 s and was most of the sharded demo's first 504 s run. `transitions()` now reads only the last
+  300 MB unless `since` is older (2 s normally, 45 s for the full-log fallback). A `dbHash` of `demo` takes 20 to 50 s per
+  shard member, so `compare_members()` hashes only the rebuilt shard, all three members at once (about 55 s).
+- `ssh()` now has `ConnectTimeout=10`, so a stalled connection fails fast and gets retried instead of hanging.
 - **A dropped block once let an overwrite hit live volumes.** On 2026-11-24 `detach(TARGET)` silently didn't run, and the
   overwrite replaced `aen-mongo-04`'s volumes under a running, mounted `mongod`. It was fixed by detaching, overwriting
   again from the same replicated snapshot, and reattaching (all members matched after). The overwrite loop in demos 1 and
@@ -70,5 +84,6 @@ was adjusted to the real behavior ("can't erase early", "a delete starts an 8-da
 
 ## Before you run the demos
 
-1. Rerun the `0-prep.py` baseline, check `members()`, and do one dry run of each demo.
+1. Rerun the `0-prep.py` baseline and `4-sharded-prep.py`, check `members()` in both `helpers` and `sharded`, and do one
+   dry run of each demo.
 2. When you're done, run `9-reset.py`.
