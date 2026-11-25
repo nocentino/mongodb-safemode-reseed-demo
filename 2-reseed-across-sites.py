@@ -4,6 +4,12 @@
 # second site in my lab. Its array gets a replicated copy of the primary's protection group, so we rebuild it from
 # the primary without copying 10 TiB across the WAN: only the blocks that changed since the last copy move.
 #
+# Blog posts: Replacing the MongoDB Replica Set Initial Sync with FlashArray Snapshots (the technique)
+#   https://www.nocentino.com/posts/2026-11-17-mongodb-reseed-replica-between-flasharrays/
+#
+# and Expanding a MongoDB Replica Set with Everpure Fusion (how aen-mongo-04 joined the set on flasharray04)
+#   https://www.nocentino.com/posts/2026-11-17-mongodb-expand-replica-set-everpure-fusion/
+#
 # ARCHITECTURE: the same replica set as demo 1. All four arrays are in one data center in my lab; flasharray04
 # stands in for a second site, and the link to it stands in for the WAN.
 #
@@ -67,9 +73,13 @@ xfer = wait_for_transfer(fa, snap, TARGET_ARRAY)
 # OVERWRITE THE SITE B MEMBER FROM THE PRIMARY'S COPY
 # ===============================================
 since = utc_now(TARGET)
+
+
+# Detach the target from the replica set before overwriting its volumes
 detach(TARGET)
 
 
+# Overwrite each role's volume on the target with the corresponding snapshot from the primary
 for role in ROLES:
     assert not ssh(TARGET, f"findmnt -n /u01/{role}", allow_fail=True), f"{TARGET} still has /u01/{role} mounted: run detach first"
     source = f"{ARRAYS['flasharray01']}:{snap}.{vol(PRIMARY, role)}"
@@ -78,7 +88,11 @@ for role in ROLES:
     print(f"overwrote {vol(TARGET, role)} from {alias(source)}")
 
 
+# Reattach the target to the replica set
 attach(fa, TARGET)
+
+
+# Start the target after reattaching it to the replica set
 start(TARGET)
 
 
@@ -86,11 +100,27 @@ start(TARGET)
 # WATCH IT REJOIN, AND PROVE IT
 # ===============================================
 wait_for_state(TARGET, "SECONDARY")
+
+
+# Show the state transitions of the target since the overwrite operation
 transitions(TARGET, since)
 
 
+# Stop the load on the primary after the target has rejoined and caught up
 stop_load()
+
+
+# Wait until the target has caught up with the primary before proceeding
 wait_until_caught_up()
+
+
+# Show the current members of the replica set
 members()
+
+
+# Compare the current members of the replica set with the expected configuration
 compare_members()
+
+
+# Check for any gaps in the replication of the target
 gaps(TARGET)

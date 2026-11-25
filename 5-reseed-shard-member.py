@@ -6,6 +6,9 @@
 # of sh2 and a config server), and we overwrite only the rebuilt member's three volumes. No fsyncLock, no initial sync,
 # and only changed blocks cross the link.
 #
+# Blog post: Reseeding a MongoDB Shard Member from a FlashArray Snapshot
+#   https://www.nocentino.com/posts/2026-12-09-mongodb-reseed-shard-member-flasharray-snapshot/
+#
 # Run 4-sharded-prep.py first. Highlight a block and run it.
 
 /Users/anocentino/Documents/GitHub/mongodb-safemode-reseed-demo/.venv/bin/python

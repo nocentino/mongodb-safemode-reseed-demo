@@ -4,6 +4,9 @@
 # snapshot of the primary, aen-mongo-05 on flasharray01. No fsyncLock, no initial sync, and only the blocks that
 # changed since the last replicated snapshot cross the link. Every other member keeps running the whole time.
 #
+# Blog post: Replacing the MongoDB Replica Set Initial Sync with FlashArray Snapshots
+#   https://www.nocentino.com/posts/2026-11-17-mongodb-reseed-replica-between-flasharrays/
+#
 # ARCHITECTURE: rs-multi, one member per FlashArray, each member's data, journal and oplog in aen-mongo-pg-multi on
 # its own array (the log volume stays out). All four arrays are in one data center; flasharray04 stands in for site B.
 #
